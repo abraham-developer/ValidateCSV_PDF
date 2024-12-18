@@ -18,6 +18,52 @@ namespace ValidateCSV_PDF
         public Form1()
         {
             InitializeComponent();
+            SetupComponents();
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        { 
+        
+        }
+
+        private void SetupComponents()
+        {
+            // Configurar el formulario principal
+            this.Text = "PDF Tracking Validator";
+            this.Size = new System.Drawing.Size(800, 600);
+
+            // Crear y configurar btnSelectCSV
+            btnSelectCSV = new Button
+            {
+                Text = "Seleccionar CSV",
+                Location = new System.Drawing.Point(20, 20),
+                Size = new System.Drawing.Size(150, 30)
+            };
+            btnSelectCSV.Click += btnSelectCSV_Click;
+
+            // Crear y configurar btnPasteTrackingNumbers
+            btnPasteTrackingNumbers = new Button
+            {
+                Text = "Pegar Tracking Numbers",
+                Location = new System.Drawing.Point(190, 20),
+                Size = new System.Drawing.Size(150, 30)
+            };
+            btnPasteTrackingNumbers.Click += btnPasteTrackingNumbers_Click;
+
+            // Crear y configurar txtResults
+            txtResults = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Location = new System.Drawing.Point(20, 70),
+                Size = new System.Drawing.Size(740, 470),
+                ReadOnly = true
+            };
+
+            // Agregar controles al formulario
+            this.Controls.Add(btnSelectCSV);
+            this.Controls.Add(btnPasteTrackingNumbers);
+            this.Controls.Add(txtResults);
         }
 
         private void btnSelectCSV_Click(object sender, EventArgs e)
@@ -37,7 +83,6 @@ namespace ValidateCSV_PDF
 
         private void btnPasteTrackingNumbers_Click(object sender, EventArgs e)
         {
-            // Show folder dialog to select base directory for storing PDFs
             using (FolderBrowserDialog folderDialog = new FolderBrowserDialog())
             {
                 folderDialog.Description = "Select the folder where you want to store PDFs";
@@ -45,31 +90,89 @@ namespace ValidateCSV_PDF
                 {
                     string selectedDirectory = folderDialog.SelectedPath;
 
-                    // Now, process the pasted tracking numbers and create folders in the selected directory
                     using (Form inputForm = new Form())
                     {
                         inputForm.Text = "Paste Tracking Numbers";
-                        inputForm.Size = new System.Drawing.Size(400, 300);
+                        inputForm.Size = new System.Drawing.Size(800, 600);
 
-                        TextBox txtInput = new TextBox
+                        // Usar RichTextBox para mejor rendimiento
+                        RichTextBox txtInput = new RichTextBox
                         {
                             Multiline = true,
                             Dock = DockStyle.Fill,
-                            ScrollBars = ScrollBars.Vertical
+                            ScrollBars = RichTextBoxScrollBars.Vertical,
+                            WordWrap = false,
+                            AcceptsTab = true,
+                            MaxLength = 0
                         };
                         inputForm.Controls.Add(txtInput);
 
+                        // Agregar etiqueta de estado
+                        Label lblStatus = new Label
+                        {
+                            Dock = DockStyle.Bottom,
+                            Height = 20,
+                            Text = "Listo para procesar tracking numbers"
+                        };
+                        inputForm.Controls.Add(lblStatus);
+
+                        // Agregar barra de progreso
+                        ProgressBar progressBar = new ProgressBar
+                        {
+                            Dock = DockStyle.Bottom,
+                            Height = 20,
+                            Style = ProgressBarStyle.Blocks
+                        };
+                        inputForm.Controls.Add(progressBar);
+
                         Button btnProcess = new Button
                         {
-                            Text = "Process Tracking Numbers",
-                            Dock = DockStyle.Bottom
+                            Text = "Procesar Tracking Numbers",
+                            Dock = DockStyle.Bottom,
+                            Height = 30
                         };
                         inputForm.Controls.Add(btnProcess);
 
-                        btnProcess.Click += (s, ev) =>
+                        btnProcess.Click += async (s, ev) =>
                         {
-                            ProcessPastedTrackingNumbers(txtInput.Text, selectedDirectory);
-                            inputForm.Close();
+                            btnProcess.Enabled = false;
+                            txtInput.ReadOnly = true;
+                            lblStatus.Text = "Procesando tracking numbers...";
+
+                            try
+                            {
+                                string text = txtInput.Text;
+                                var trackingNumbers = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                                progressBar.Maximum = trackingNumbers.Length;
+                                progressBar.Value = 0;
+
+                                const int batchSize = 1000;
+                                for (int i = 0; i < trackingNumbers.Length; i += batchSize)
+                                {
+                                    var batch = trackingNumbers.Skip(i).Take(batchSize);
+                                    await System.Threading.Tasks.Task.Run(() =>
+                                    {
+                                        ProcessTrackingNumbersBatch(batch, selectedDirectory);
+                                    });
+
+                                    progressBar.Value = Math.Min(i + batchSize, trackingNumbers.Length);
+                                    lblStatus.Text = $"Procesados {progressBar.Value} de {trackingNumbers.Length} tracking numbers...";
+                                    Application.DoEvents();
+                                }
+
+                                MessageBox.Show($"Procesamiento completado.\nTotal de tracking numbers procesados: {trackingNumbers.Length}",
+                                    "Éxito", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show($"Error procesando tracking numbers: {ex.Message}",
+                                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }
+                            finally
+                            {
+                                inputForm.Close();
+                            }
                         };
 
                         inputForm.ShowDialog();
@@ -78,40 +181,30 @@ namespace ValidateCSV_PDF
             }
         }
 
-        private void ProcessPastedTrackingNumbers(string trackingNumbersText, string baseDirectory)
+        private void ProcessTrackingNumbersBatch(IEnumerable<string> trackingNumbers, string baseDirectory)
         {
-            try
+            string foundPDFsFolder = Path.Combine(baseDirectory, "FoundPDFs");
+            string notFoundPDFsFolder = Path.Combine(baseDirectory, "NotFoundPDFs");
+
+            // Asegurar que existan las carpetas
+            Directory.CreateDirectory(foundPDFsFolder);
+            Directory.CreateDirectory(notFoundPDFsFolder);
+
+            foreach (string trackingNumber in trackingNumbers)
             {
-                // Create folders to store found and not found PDFs in the selected directory
-                string foundPDFsFolder = Path.Combine(baseDirectory, "FoundPDFs");
-                string notFoundPDFsFolder = Path.Combine(baseDirectory, "NotFoundPDFs");
-                Directory.CreateDirectory(foundPDFsFolder);
-                Directory.CreateDirectory(notFoundPDFsFolder);
+                string cleanTrackingNumber = trackingNumber.Trim().Trim('"');
+                string pdfPath = Path.Combine(baseDirectory, $"{cleanTrackingNumber}.pdf");
 
-                // List to store processing results
-                List<string> processResults = new List<string>();
-
-                // Split the input text into tracking numbers
-                string[] trackingNumbers = trackingNumbersText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-                // Process each tracking number
-                foreach (string trackingNumber in trackingNumbers)
+                try
                 {
-                    // Trim any whitespace and quotes
-                    string cleanTrackingNumber = trackingNumber.Trim().Trim('"');
-
-                    // Check if PDF exists
-                    string pdfPath = Path.Combine(baseDirectory, $"{cleanTrackingNumber}.pdf");
                     if (File.Exists(pdfPath))
                     {
-                        // Copy PDF to found PDFs folder
                         string destinationPath = Path.Combine(foundPDFsFolder, $"{cleanTrackingNumber}.pdf");
                         File.Copy(pdfPath, destinationPath, true);
-                        processResults.Add($"Found PDF for Tracking Number: {cleanTrackingNumber}");
+                        UpdateResults($"Encontrado PDF para Tracking Number: {cleanTrackingNumber}");
                     }
                     else
                     {
-                        // Check all PDFs in base directory
                         bool pdfFound = false;
                         string[] allPdfFiles = Directory.GetFiles(baseDirectory, "*.pdf");
                         foreach (string pdf in allPdfFiles)
@@ -119,10 +212,9 @@ namespace ValidateCSV_PDF
                             string pdfFileName = Path.GetFileNameWithoutExtension(pdf);
                             if (pdfFileName.Contains(cleanTrackingNumber))
                             {
-                                // Copy PDF to found PDFs folder
                                 string destinationPath = Path.Combine(foundPDFsFolder, $"{pdfFileName}.pdf");
                                 File.Copy(pdf, destinationPath, true);
-                                processResults.Add($"Found PDF for Tracking Number: {cleanTrackingNumber} (partial match)");
+                                UpdateResults($"Encontrado PDF para Tracking Number: {cleanTrackingNumber} (coincidencia parcial)");
                                 pdfFound = true;
                                 break;
                             }
@@ -130,34 +222,34 @@ namespace ValidateCSV_PDF
 
                         if (!pdfFound)
                         {
-                            processResults.Add($"No PDF found for Tracking Number: {cleanTrackingNumber}");
-
-                            // Check if there's a PDF with tracking number in base directory
+                            UpdateResults($"No se encontró PDF para Tracking Number: {cleanTrackingNumber}");
                             string[] similarPdfs = Directory.GetFiles(baseDirectory, $"*{cleanTrackingNumber}*.pdf");
                             foreach (string similarPdf in similarPdfs)
                             {
                                 string destinationPath = Path.Combine(notFoundPDFsFolder, Path.GetFileName(similarPdf));
                                 File.Copy(similarPdf, destinationPath, true);
-                                processResults.Add($"Moved similar PDF to Not Found folder: {Path.GetFileName(similarPdf)}");
+                                UpdateResults($"Movido PDF similar a carpeta Not Found: {Path.GetFileName(similarPdf)}");
                             }
                         }
                     }
                 }
-
-                // Display results
-                txtResults.Clear();
-                txtResults.Lines = processResults.ToArray();
-
-                MessageBox.Show($"Processing complete.\n" +
-                    $"Total tracking numbers: {processResults.Count}\n" +
-                    $"Found PDFs saved in: {foundPDFsFolder}\n" +
-                    $"Not Found PDFs saved in: {notFoundPDFsFolder}",
-                    "Manual Tracking Numbers Processing", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                catch (IOException ex)
+                {
+                    UpdateResults($"Error procesando {cleanTrackingNumber}: {ex.Message}");
+                    continue;
+                }
             }
-            catch (Exception ex)
+        }
+
+        private void UpdateResults(string message)
+        {
+            if (txtResults.InvokeRequired)
             {
-                MessageBox.Show($"Error processing tracking numbers: {ex.Message}", "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                txtResults.Invoke(new Action(() => UpdateResults(message)));
+            }
+            else
+            {
+                txtResults.AppendText(message + Environment.NewLine);
             }
         }
 
@@ -165,107 +257,45 @@ namespace ValidateCSV_PDF
         {
             try
             {
-                // Get the directory of the CSV file
                 string baseDirectory = Path.GetDirectoryName(csvFilePath);
-
-                // Create folders to store found and not found PDFs in the selected directory
                 string foundPDFsFolder = Path.Combine(baseDirectory, "FoundPDFs");
                 string notFoundPDFsFolder = Path.Combine(baseDirectory, "NotFoundPDFs");
+
                 Directory.CreateDirectory(foundPDFsFolder);
                 Directory.CreateDirectory(notFoundPDFsFolder);
 
-                // List to store processing results
                 List<string> processResults = new List<string>();
 
-                // Use TextFieldParser for robust CSV parsing
                 using (TextFieldParser parser = new TextFieldParser(csvFilePath, Encoding.UTF8))
                 {
                     parser.TextFieldType = FieldType.Delimited;
                     parser.SetDelimiters(",");
                     parser.HasFieldsEnclosedInQuotes = true;
 
-                    // Skip header if exists
                     if (!parser.EndOfData)
                         parser.ReadFields();
 
-                    // Process each row
                     while (!parser.EndOfData)
                     {
                         string[] fields = parser.ReadFields();
                         if (fields != null && fields.Length >= 2)
                         {
-                            // Remove quotes from tracking number
                             string trackingNumber = fields[0].Trim('"');
-
-                            // Check if PDF exists
-                            string pdfPath = Path.Combine(baseDirectory, $"{trackingNumber}.pdf");
-                            if (File.Exists(pdfPath))
-                            {
-                                // Copy PDF to found PDFs folder
-                                string destinationPath = Path.Combine(foundPDFsFolder, $"{trackingNumber}.pdf");
-                                File.Copy(pdfPath, destinationPath, true);
-                                processResults.Add($"Found PDF for Tracking Number: {trackingNumber}");
-                            }
-                            else
-                            {
-                                // Check all PDFs in base directory
-                                bool pdfFound = false;
-                                string[] allPdfFiles = Directory.GetFiles(baseDirectory, "*.pdf");
-                                foreach (string pdf in allPdfFiles)
-                                {
-                                    string pdfFileName = Path.GetFileNameWithoutExtension(pdf);
-                                    if (pdfFileName.Contains(trackingNumber))
-                                    {
-                                        // Copy PDF to found PDFs folder
-                                        string destinationPath = Path.Combine(foundPDFsFolder, $"{pdfFileName}.pdf");
-                                        File.Copy(pdf, destinationPath, true);
-                                        processResults.Add($"Found PDF for Tracking Number: {trackingNumber} (partial match)");
-                                        pdfFound = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!pdfFound)
-                                {
-                                    // Try to find similar PDFs with partial matching
-                                    processResults.Add($"No PDF found for Tracking Number: {trackingNumber}");
-
-                                    // Check if there's a PDF with tracking number in base directory
-                                    string[] similarPdfs = Directory.GetFiles(baseDirectory, $"*{trackingNumber}*.pdf");
-                                    foreach (string similarPdf in similarPdfs)
-                                    {
-                                        string destinationPath = Path.Combine(notFoundPDFsFolder, Path.GetFileName(similarPdf));
-                                        File.Copy(similarPdf, destinationPath, true);
-                                        processResults.Add($"Moved similar PDF to Not Found folder: {Path.GetFileName(similarPdf)}");
-                                    }
-                                }
-                            }
+                            ProcessTrackingNumbersBatch(new[] { trackingNumber }, baseDirectory);
                         }
                     }
                 }
 
-                // Display results
-                txtResults.Clear();
-                txtResults.Lines = processResults.ToArray();
-
-                MessageBox.Show($"Processing complete.\n" +
-                    $"Total tracking numbers: {processResults.Count}\n" +
-                    $"Found PDFs saved in: {foundPDFsFolder}\n" +
-                    $"Not Found PDFs saved in: {notFoundPDFsFolder}",
-                    "CSV Processing", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"Procesamiento completado.\n" +
+                    $"PDFs encontrados guardados en: {foundPDFsFolder}\n" +
+                    $"PDFs no encontrados guardados en: {notFoundPDFsFolder}",
+                    "Procesamiento CSV", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error processing CSV: {ex.Message}", "Error",
+                MessageBox.Show($"Error procesando CSV: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-        }
-
-        
-
-        private void Form1_Load(object sender, EventArgs e)
-        {
-
         }
     }
 }
